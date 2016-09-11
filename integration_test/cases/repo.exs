@@ -1176,4 +1176,71 @@ defmodule Ecto.Integration.RepoTest do
                             conflict_target: [:uuid], returning: [:id, :title])
     end
   end
+
+  ## Denormalization
+
+  test "sync duplicated parent fields on insert" do
+    defmodule Comment do
+      use Ecto.Integration.Schema
+      import Ecto.Changeset
+      @duplicated_parent_fields [:group_id, {:title, :text}]
+
+      schema "comments" do
+        field :lock_version, :integer
+        belongs_to :group, Group
+        belongs_to :post, Post
+        field :text, :string
+      end
+
+      def changeset(comment, params) do
+        comment
+        |> cast(params, [:text])
+      end
+    end
+
+    defmodule Post do
+      use Ecto.Integration.Schema
+      import Ecto.Changeset
+
+      schema "posts" do
+        field :title, :string
+        belongs_to :group, Group
+        has_many :comments, Comment
+        timestamps
+      end
+
+      def changeset(order, params \\ %{}) do
+        order
+        |> cast(params, [:title])
+        |> cast_assoc(:comments)
+      end
+    end
+
+    defmodule Group do
+      use Ecto.Integration.Schema
+      import Ecto.Changeset
+
+      schema "groups" do
+        field :name, :string
+        has_many :posts, Post
+        timestamps
+      end
+
+      def changeset(group, params) do
+        group
+        |> cast(params, [:name])
+        |> cast_assoc(:posts)
+      end
+    end
+
+    Group.changeset(struct(Group, %{}), %{name: "My Group", posts: [%{title: "My Post", comments: [%{lock_version: 0}]}]})
+    |> TestRepo.insert!
+
+    group = TestRepo.one(Group)
+    post = TestRepo.one(Post)
+    comment = TestRepo.one(Comment)
+
+    assert comment.group_id == group.id
+    assert comment.text == post.title
+  end
 end
